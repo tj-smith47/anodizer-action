@@ -49,7 +49,7 @@ jobs:
           echo "Will retarget tag $MAJOR to master HEAD."
 
       - name: Force-update major tag to master HEAD
-        uses: richardsimko/update-tag@v2
+        uses: richardsimko/update-tag@v3
         with:
           tag_name: ${{ inputs.major }}
         env:
