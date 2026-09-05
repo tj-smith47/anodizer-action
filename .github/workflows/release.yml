@@ -58,7 +58,7 @@ jobs:
       # recovery, but the live path is this step.
       - name: Force-update major tag
         if: steps.semantic.outputs.new_release_published == 'true'
-        uses: richardsimko/update-tag@v2
+        uses: richardsimko/update-tag@v3
         with:
           tag_name: v${{ steps.semantic.outputs.new_release_major_version }}
         env:

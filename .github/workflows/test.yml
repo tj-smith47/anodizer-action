@@ -92,7 +92,7 @@ jobs:
       # python3.exe; tests/test_helper.bash publishes `python` under that name,
       # so pinning one interpreter here is enough for both legs.
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
