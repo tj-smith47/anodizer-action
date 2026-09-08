@@ -30,6 +30,9 @@ load test_helper
 setup() {
     common_setup
 
+    export RUNNER_TEMP="${_TEST_HOME}/runner-temp"
+    mkdir -p "$RUNNER_TEMP"
+
     FAKE_BIN="${_TEST_HOME}/fake-bin"
     mkdir -p "$FAKE_BIN"
 
@@ -165,6 +168,7 @@ _run_install_zig() {
         BREW_LOG="${BREW_LOG}" \
         CHOCO_LOG="${CHOCO_LOG}" \
         ZIG_FAKE_INDEX="${ZIG_FAKE_INDEX}" \
+        RUNNER_TEMP="${RUNNER_TEMP}" \
         NO_COLOR=1 \
         PATH="${FAKE_BIN}:${PATH}" \
         "$@" \
@@ -187,7 +191,9 @@ _run_install_zig() {
     # reconstructed zig-<os>-<arch> or zig-<arch>-<os> name.
     grep -q "zig-INDEXNAME-x86_64-$v.tar.xz" "$CURL_LOG"
     # The sha gate ran against the downloaded tarball with the index's shasum.
-    grep -q -- '-c - | feedface  /tmp/zig.tar.xz' "$SHA_LOG"
+    # Staged under RUNNER_TEMP, not a fixed world-writable /tmp: the tarball
+    # is read back by `sudo tar` after this gate.
+    grep -q -- "-c - | feedface  ${RUNNER_TEMP}/zig.tar.xz" "$SHA_LOG"
     # Extracted to /opt/zig with --strip-components=1, symlinked into PATH.
     grep -q 'mkdir -p /opt/zig' "$SUDO_LOG"
     grep -q -- '-C /opt/zig --strip-components=1' "$SUDO_LOG"

@@ -29,6 +29,9 @@ load test_helper
 setup() {
     common_setup
 
+    export RUNNER_TEMP="${_TEST_HOME}/runner-temp"
+    mkdir -p "$RUNNER_TEMP"
+
     FAKE_BIN="${_TEST_HOME}/fake-bin"
     mkdir -p "$FAKE_BIN"
 
@@ -152,6 +155,7 @@ _run_install_node() {
         BREW_LOG="${BREW_LOG}" \
         CHOCO_LOG="${CHOCO_LOG}" \
         NPM_LOG="${NPM_LOG}" \
+        RUNNER_TEMP="${RUNNER_TEMP}" \
         NO_COLOR=1 \
         PATH="${FAKE_BIN}:${PATH}" \
         "$@" \
@@ -172,7 +176,8 @@ _run_install_node() {
     grep -q 'SHASUMS256.txt' "$CURL_LOG"
     # The sha gate actually ran: `sha256sum -c -` against the downloaded tarball
     # (the path arrives on the stub's stdin, logged after the ` | ` separator).
-    grep -q -- '-c - | .* /tmp/node.tar.xz' "$SHA_LOG"
+    # Staged under RUNNER_TEMP, not a fixed world-writable /tmp.
+    grep -q -- "-c - | .* ${RUNNER_TEMP}/node.tar.xz" "$SHA_LOG"
     # Extracted to /opt/node with --strip-components=1.
     grep -q 'mkdir -p /opt/node' "$SUDO_LOG"
     grep -q -- '-C /opt/node --strip-components=1' "$SUDO_LOG"

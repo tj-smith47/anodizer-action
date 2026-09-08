@@ -154,3 +154,16 @@ _run_install_syft() {
     [ "$status" -eq 0 ]
     grep -q 'syft' "$CHOCO_LOG"
 }
+
+# -- Test 6: the installer is staged under RUNNER_TEMP, not /tmp ------------
+
+@test "syft: the upstream installer is staged under RUNNER_TEMP" {
+    _run_install_syft RUNNER_OS="Linux" RUNNER_ARCH="X64" \
+        SYFT_FAIL_TIMES=0 ANODIZER_FETCH_ATTEMPTS=3
+    [ "$status" -eq 0 ]
+    # It runs as root, so a fixed world-writable path would let any local
+    # process swap the script between the fetch and the privileged exec.
+    [ -f "${RUNNER_TEMP}/syft-install.sh" ]
+    # No staging path in the installer is a hard-coded /tmp any more.
+    ! grep -nE '(sudo|install|tar) [^|]*[^{]/tmp/' "${REPO_ROOT}/scripts/install/deps.sh"
+}

@@ -19,6 +19,14 @@ set -euo pipefail
 source "${GITHUB_ACTION_PATH}/scripts/lib/gha.sh"
 
 : "${RUNNER_OS:?RUNNER_OS is required}"
+# Staging directory for downloaded installers, archives and binaries. Several
+# of them are consumed by `sudo` afterwards (`sudo install`, `sudo tar -xJf`,
+# and in syft's case `sudo <script>`), so a fixed world-writable path lets any
+# unprivileged process on the box swap the file between the checksum test and
+# the privileged read. RUNNER_TEMP is per-job and owned by the runner user;
+# /tmp is only the fallback for a local/bats run that sets neither.
+ANODIZER_STAGE_DIR="${RUNNER_TEMP:-/tmp}"
+
 EXPLICIT_INSTALL="${EXPLICIT_INSTALL:-}"
 AUTO_INSTALL="${AUTO_INSTALL:-}"
 DETERMINISM_INSTALL="${DETERMINISM_INSTALL:-}"
@@ -552,7 +560,7 @@ cosign_install_download_verify() {
     local bin="$1" sha_cmd="$2" b64_decode="$3"
     local version="${COSIGN_VERSION:-v2.4.1}"
     local base="https://github.com/sigstore/cosign/releases/download/${version}"
-    fetch_retry anodizer::fetch "${base}/${bin}" /tmp/cosign
+    fetch_retry anodizer::fetch "${base}/${bin}" "${ANODIZER_STAGE_DIR}/cosign"
     # Sigstore publishes the keyless .pem and .sig as base64-encoded files
     # (single-line, starts with `LS0tLS1CRUdJTiB...`). Decode before
     # handing to cosign — its PEM parser does not strip base64, so a raw
@@ -564,15 +572,15 @@ cosign_install_download_verify() {
     # bare curl — wrapping curl alone would swallow the piped bytes. `set -o
     # pipefail` inside the wrapped shell preserves the outer pipefail contract
     # so a curl failure mid-pipe still aborts.
-    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.pem' | ${b64_decode} > /tmp/cosign.pem"
-    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.sig' | ${b64_decode} > /tmp/cosign.sig"
-    fetch_retry anodizer::fetch "${base}/cosign_checksums.txt" /tmp/cosign_checksums.txt
+    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.pem' | ${b64_decode} > ${ANODIZER_STAGE_DIR}/cosign.pem"
+    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.sig' | ${b64_decode} > ${ANODIZER_STAGE_DIR}/cosign.sig"
+    fetch_retry anodizer::fetch "${base}/cosign_checksums.txt" "${ANODIZER_STAGE_DIR}/cosign_checksums.txt"
 
     # SHA256 first — bootstraps trust without requiring cosign-to-verify-cosign.
     local expected
-    expected=$(sha_from_checksums /tmp/cosign_checksums.txt "$bin")
-    anodizer::run_quiet bash -c "echo '${expected}  /tmp/cosign' | ${sha_cmd}"
-    sudo install /tmp/cosign /usr/local/bin/cosign
+    expected=$(sha_from_checksums "${ANODIZER_STAGE_DIR}/cosign_checksums.txt" "$bin")
+    anodizer::run_quiet bash -c "echo '${expected}  ${ANODIZER_STAGE_DIR}/cosign' | ${sha_cmd}"
+    sudo install "${ANODIZER_STAGE_DIR}/cosign" /usr/local/bin/cosign
 
     # Then keyless signature. Cosign releases are signed by the GCP service
     # account keyless@projectsigstore.iam.gserviceaccount.com via Google
@@ -591,11 +599,11 @@ cosign_install_download_verify() {
     # of --key/--cert/--sk must be provided" error before the cert file
     # is even parsed.
     anodizer::run_quiet env -u COSIGN_KEY -u COSIGN_PUB_KEY cosign verify-blob \
-        --certificate /tmp/cosign.pem \
-        --signature /tmp/cosign.sig \
+        --certificate "${ANODIZER_STAGE_DIR}/cosign.pem" \
+        --signature "${ANODIZER_STAGE_DIR}/cosign.sig" \
         --certificate-identity keyless@projectsigstore.iam.gserviceaccount.com \
         --certificate-oidc-issuer https://accounts.google.com \
-        /tmp/cosign \
+        "${ANODIZER_STAGE_DIR}/cosign" \
         || gha_fail "cosign keyless signature verification FAILED — refusing to install unverified binary"
     anodizer::vok "cosign keyless signature verified"
 }
@@ -671,12 +679,12 @@ install_syft() {
     case "$RUNNER_OS" in
         Linux)
             local version="${SYFT_VERSION:-v1.18.0}"
-            fetch_retry anodizer::fetch "https://raw.githubusercontent.com/anchore/syft/main/install.sh" /tmp/syft-install.sh
-            chmod +x /tmp/syft-install.sh
+            fetch_retry anodizer::fetch "https://raw.githubusercontent.com/anchore/syft/main/install.sh" "${ANODIZER_STAGE_DIR}/syft-install.sh"
+            chmod +x "${ANODIZER_STAGE_DIR}/syft-install.sh"
             # The tarball download lives INSIDE upstream's install.sh, so
             # retrying only the fetch of that script leaves the payload — the
             # part a CDN 302 actually breaks — unprotected.
-            fetch_retry anodizer::run_quiet sudo /tmp/syft-install.sh -b /usr/local/bin "${version}"
+            fetch_retry anodizer::run_quiet sudo "${ANODIZER_STAGE_DIR}/syft-install.sh" -b /usr/local/bin "${version}"
             ;;
         macOS)   brew_install syft SYFT_VERSION ;;
         # No native windows-arm64 syft download here: the choco syft package
@@ -711,18 +719,18 @@ install_zig() {
             # ZIG_VERSION and makes a bad pin fail loudly here instead of
             # as a 404 mid-release.
             fetch_retry anodizer::fetch \
-                "https://ziglang.org/download/index.json" /tmp/zig-index.json
+                "https://ziglang.org/download/index.json" "${ANODIZER_STAGE_DIR}/zig-index.json"
             local url expected
             url=$(jq -r --arg v "$version" --arg k "${arch}-linux" \
-                '.[$v][$k].tarball // empty' /tmp/zig-index.json)
+                '.[$v][$k].tarball // empty' "${ANODIZER_STAGE_DIR}/zig-index.json")
             expected=$(jq -r --arg v "$version" --arg k "${arch}-linux" \
-                '.[$v][$k].shasum // empty' /tmp/zig-index.json)
+                '.[$v][$k].shasum // empty' "${ANODIZER_STAGE_DIR}/zig-index.json")
             { [ -n "$url" ] && [ -n "$expected" ]; } \
                 || gha_fail "zig ${version} has no ${arch}-linux entry in ziglang.org/download/index.json"
-            fetch_retry anodizer::fetch "$url" /tmp/zig.tar.xz
-            anodizer::run_quiet bash -c "echo '${expected}  /tmp/zig.tar.xz' | sha256sum -c -"
+            fetch_retry anodizer::fetch "$url" "${ANODIZER_STAGE_DIR}/zig.tar.xz"
+            anodizer::run_quiet bash -c "echo '${expected}  ${ANODIZER_STAGE_DIR}/zig.tar.xz' | sha256sum -c -"
             sudo mkdir -p /opt/zig
-            sudo tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+            sudo tar -xJf "${ANODIZER_STAGE_DIR}/zig.tar.xz" -C /opt/zig --strip-components=1
             sudo ln -sf /opt/zig/zig /usr/local/bin/zig
             ;;
         macOS)   brew_install zig ZIG_VERSION ;;
@@ -746,7 +754,7 @@ install_node() {
             # nodejs.org publishes per-release SHASUMS256.txt (`<sha>  <file>`
             # per line) rather than per-tarball sidecars; verify against it so
             # no sha is hardcoded — the dated dist dir is immutable.
-            fetch_retry anodizer::fetch "${base}/${tarball}" /tmp/node.tar.xz
+            fetch_retry anodizer::fetch "${base}/${tarball}" "${ANODIZER_STAGE_DIR}/node.tar.xz"
             local expected
             # NOT routed through anodizer::fetch/run_quiet: this curl's stdout
             # feeds the `$(... | grep ...)` capture, which a file-writing fetch
@@ -760,9 +768,9 @@ install_node() {
                 | grep " ${tarball}\$" | awk '{print $1}')
             [ -n "$expected" ] \
                 || gha_fail "node sha256 missing from SHASUMS256.txt for ${tarball}"
-            anodizer::run_quiet bash -c "echo '${expected}  /tmp/node.tar.xz' | sha256sum -c -"
+            anodizer::run_quiet bash -c "echo '${expected}  ${ANODIZER_STAGE_DIR}/node.tar.xz' | sha256sum -c -"
             sudo mkdir -p /opt/node
-            sudo tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+            sudo tar -xJf "${ANODIZER_STAGE_DIR}/node.tar.xz" -C /opt/node --strip-components=1
             sudo ln -sf /opt/node/bin/node /usr/local/bin/node
             sudo ln -sf /opt/node/bin/npm /usr/local/bin/npm
             sudo ln -sf /opt/node/bin/npx /usr/local/bin/npx
@@ -1028,10 +1036,10 @@ install_alejandra() {
                 sha="$override_sha"
             fi
             local bin="alejandra-${arch}-unknown-linux-musl"
-            fetch_retry anodizer::fetch "https://github.com/kamadorueda/alejandra/releases/download/${version}/${bin}" /tmp/alejandra
-            anodizer::run_quiet bash -c "echo '${sha}  /tmp/alejandra' | sha256sum -c -"
-            sudo install -m 0755 /tmp/alejandra /usr/local/bin/alejandra
-            rm -f /tmp/alejandra
+            fetch_retry anodizer::fetch "https://github.com/kamadorueda/alejandra/releases/download/${version}/${bin}" "${ANODIZER_STAGE_DIR}/alejandra"
+            anodizer::run_quiet bash -c "echo '${sha}  ${ANODIZER_STAGE_DIR}/alejandra' | sha256sum -c -"
+            sudo install -m 0755 "${ANODIZER_STAGE_DIR}/alejandra" /usr/local/bin/alejandra
+            rm -f "${ANODIZER_STAGE_DIR}/alejandra"
             ;;
         macOS)   brew_install alejandra ALEJANDRA_VERSION ;;
         Windows) skip_unsupported_os alejandra "Linux/macOS only (nix publisher targets Unix runners)" ;;
