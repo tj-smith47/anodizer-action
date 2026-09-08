@@ -673,7 +673,10 @@ install_syft() {
             local version="${SYFT_VERSION:-v1.18.0}"
             fetch_retry anodizer::fetch "https://raw.githubusercontent.com/anchore/syft/main/install.sh" /tmp/syft-install.sh
             chmod +x /tmp/syft-install.sh
-            anodizer::run_quiet sudo /tmp/syft-install.sh -b /usr/local/bin "${version}"
+            # The tarball download lives INSIDE upstream's install.sh, so
+            # retrying only the fetch of that script leaves the payload — the
+            # part a CDN 302 actually breaks — unprotected.
+            fetch_retry anodizer::run_quiet sudo /tmp/syft-install.sh -b /usr/local/bin "${version}"
             ;;
         macOS)   brew_install syft SYFT_VERSION ;;
         # No native windows-arm64 syft download here: the choco syft package
