@@ -21,6 +21,15 @@ tap="$(mktemp)"
 # shellcheck disable=SC2064  # expand $tap now: the path must survive the trap.
 trap "rm -f '${tap}'" EXIT
 
+# A test that creates a symlink must force a native one: MSYS `ln -s` copies
+# by default, and the copy keeps the target's mtime, so a test written for a
+# link passes or fails on Windows for reasons unrelated to the code under test.
+if grep -rn --include='*.bats' --include='*.bash' -E '(^|[^A-Za-z_])ln -s[a-zA-Z]* ' "$tests_dir" \
+    | grep -v 'winsymlinks:nativestrict' | grep -vE "^[^:]+:[0-9]+:\s*#|grep -q|SUDO_LOG"; then
+    printf 'FAIL: a symlink created in a test must use MSYS=winsymlinks:nativestrict ln -s\n' >&2
+    exit 1
+fi
+
 bats_rc=0
 bats --tap "$tests_dir" | tee "$tap" || bats_rc=$?
 

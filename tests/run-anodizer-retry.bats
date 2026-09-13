@@ -56,7 +56,14 @@ if [ "\$n" -eq 1 ]; then
     echo '{}' > ./dist/run-12345/summary.json
     echo man > ./dist/anodizer.1
     echo cached > ./dist/.cache/probe
-    ln -s "$WORKDIR/outside-target" ./dist/link-out
+    # MSYS ln -s silently COPIES unless native symlinks are forced, and the
+    # copy keeps the target's mtime, so it predates the cleanup's input marker
+    # and survives as a preserved input. Only a real link exercises contract 2.
+    MSYS=winsymlinks:nativestrict ln -s "$WORKDIR/outside-target" ./dist/link-out
+    if [ ! -L ./dist/link-out ]; then
+        echo "stub: the dist symlink was not created" >&2
+        exit 3
+    fi
     exit 1
 fi
 if [ -d ./dist ] && [ -n "\$(ls -A ./dist)" ]; then
