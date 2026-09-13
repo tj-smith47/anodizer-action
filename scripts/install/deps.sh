@@ -26,6 +26,12 @@ source "${GITHUB_ACTION_PATH}/scripts/lib/gha.sh"
 # the privileged read. RUNNER_TEMP is per-job and owned by the runner user;
 # /tmp is only the fallback for a local/bats run that sets neither.
 ANODIZER_STAGE_DIR="${RUNNER_TEMP:-/tmp}"
+# Git-Bash on a Windows runner publishes RUNNER_TEMP as a Windows path
+# (D:\a\_temp); a backslash path breaks once it is spliced into a `bash -c`
+# string, so it is converted to the POSIX spelling once, here.
+if command -v cygpath >/dev/null 2>&1; then
+    ANODIZER_STAGE_DIR="$(cygpath -u "${ANODIZER_STAGE_DIR}")"
+fi
 
 EXPLICIT_INSTALL="${EXPLICIT_INSTALL:-}"
 AUTO_INSTALL="${AUTO_INSTALL:-}"
@@ -348,7 +354,7 @@ nfpm_install_linux() {
     esac
     local base="https://github.com/goreleaser/nfpm/releases/download/v${version}"
     local tarball="nfpm_${version}_Linux_${arch}.tar.gz"
-    local install_dir="${RUNNER_TEMP:-/tmp}/nfpm"
+    local install_dir="${ANODIZER_STAGE_DIR}/nfpm"
     mkdir -p "$install_dir"
 
     fetch_retry anodizer::fetch "${base}/${tarball}" "${install_dir}/${tarball}"
@@ -462,7 +468,7 @@ snapcraft_install_linux_pip() {
             || gha_fail "snapcraft: apt install of ${apt_needs[*]} failed — preinstall snapcraft (or these packages) in the runner image"
     fi
 
-    local workdir="${RUNNER_TEMP:-/tmp}/snapcraft-pip"
+    local workdir="${ANODIZER_STAGE_DIR}/snapcraft-pip"
     mkdir -p "$workdir"
     fetch_retry anodizer::fetch "https://raw.githubusercontent.com/canonical/snapcraft/${version}/uv.lock" "${workdir}/uv.lock" \
         || gha_fail "snapcraft: failed to fetch uv.lock for tag ${version} — does the tag exist upstream?"
@@ -572,8 +578,8 @@ cosign_install_download_verify() {
     # bare curl — wrapping curl alone would swallow the piped bytes. `set -o
     # pipefail` inside the wrapped shell preserves the outer pipefail contract
     # so a curl failure mid-pipe still aborts.
-    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.pem' | ${b64_decode} > ${ANODIZER_STAGE_DIR}/cosign.pem"
-    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.sig' | ${b64_decode} > ${ANODIZER_STAGE_DIR}/cosign.sig"
+    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.pem' | ${b64_decode} > '${ANODIZER_STAGE_DIR}/cosign.pem'"
+    fetch_retry anodizer::run_quiet bash -c "set -o pipefail; curl -sSfL '${base}/${bin}-keyless.sig' | ${b64_decode} > '${ANODIZER_STAGE_DIR}/cosign.sig'"
     fetch_retry anodizer::fetch "${base}/cosign_checksums.txt" "${ANODIZER_STAGE_DIR}/cosign_checksums.txt"
 
     # SHA256 first — bootstraps trust without requiring cosign-to-verify-cosign.
@@ -647,7 +653,7 @@ cosign_install_windows() {
     # a determinism shard's within-run comparison.
     local arch=amd64
     local bin="cosign-windows-${arch}.exe"
-    local install_dir="${RUNNER_TEMP:-/tmp}/cosign"
+    local install_dir="${ANODIZER_STAGE_DIR}/cosign"
     mkdir -p "$install_dir"
     fetch_retry anodizer::fetch "${base}/${bin}" "${install_dir}/cosign.exe"
     fetch_retry anodizer::fetch "${base}/cosign_checksums.txt" "${install_dir}/cosign_checksums.txt"
@@ -963,7 +969,7 @@ install_pkgbuild() {
             fi
             apt_flush
             if ! command -v xar > /dev/null 2>&1; then
-                local xsrc="${RUNNER_TEMP:-/tmp}/xar"
+                local xsrc="${ANODIZER_STAGE_DIR}/xar"
                 rm -rf "$xsrc"
                 anodizer::run_quiet git clone --depth 1 https://github.com/mackyle/xar.git "$xsrc" \
                     || gha_fail "xar clone failed"
@@ -999,7 +1005,7 @@ install_pkgbuild() {
                 rm -rf "$xsrc"
             fi
             if ! command -v mkbom > /dev/null 2>&1; then
-                local src="${RUNNER_TEMP:-/tmp}/bomutils"
+                local src="${ANODIZER_STAGE_DIR}/bomutils"
                 rm -rf "$src"
                 anodizer::run_quiet git clone --depth 1 https://github.com/hogliux/bomutils.git "$src" \
                     || gha_fail "bomutils clone failed"
@@ -1083,7 +1089,7 @@ install_linuxdeploy() {
                     || gha_fail "LINUXDEPLOY_VERSION/LINUXDEPLOY_PLUGIN_VERSION override requires LINUXDEPLOY_SHA256 and LINUXDEPLOY_PLUGIN_SHA256 (upstream publishes no checksums file)"
             fi
 
-            local install_dir="${RUNNER_TEMP:-/tmp}/linuxdeploy"
+            local install_dir="${ANODIZER_STAGE_DIR}/linuxdeploy"
             mkdir -p "$install_dir"
 
             local ld_url="https://github.com/linuxdeploy/linuxdeploy/releases/download/${version}/linuxdeploy-${arch}.AppImage"
@@ -1142,7 +1148,7 @@ install_rcodesign() {
                 sha="$override_sha"
             fi
 
-            local install_dir="${RUNNER_TEMP:-/tmp}/rcodesign"
+            local install_dir="${ANODIZER_STAGE_DIR}/rcodesign"
             mkdir -p "$install_dir"
             local tarball="apple-codesign-${version}-${triple}.tar.gz"
             # The release tag is URL-encoded (`apple-codesign/<ver>` → `%2F`).

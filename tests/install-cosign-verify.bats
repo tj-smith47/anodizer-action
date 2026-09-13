@@ -462,3 +462,27 @@ STUB
     [[ "$output" == *"Unsupported macOS arch for cosign"* ]]
     [ ! -f "${BREW_CALLED_FILE}" ]
 }
+
+# ── Test 11: RUNNER_TEMP is the staging dir, whatever its spelling ──────
+# GitHub runners always set RUNNER_TEMP, and on Windows it is a backslash
+# path; the install must stage under it even when the spelling needs
+# quoting inside a `bash -c` string. A directory name with a space pins the
+# quoting on every platform; the Windows leg additionally exercises the
+# cygpath conversion through the runner's real RUNNER_TEMP.
+@test "cosign: staged files land under RUNNER_TEMP even when its path needs quoting" {
+    cat > "${FAKE_BIN}/cosign" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    chmod +x "${FAKE_BIN}/cosign"
+    local stage="${_TEST_HOME}/stage dir"
+    mkdir -p "$stage"
+
+    _run_install_cosign RUNNER_TEMP="$stage"
+
+    [ "$status" -eq 0 ]
+    [ -f "${stage}/cosign" ]
+    [ -f "${stage}/cosign.pem" ]
+    [ -f "${stage}/cosign.sig" ]
+    [ -f "${stage}/cosign_checksums.txt" ]
+}
