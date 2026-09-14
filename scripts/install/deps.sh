@@ -6,13 +6,14 @@
 #
 # Recognised deps: nfpm, makeself, snapcraft, rpmbuild, cosign, syft, zig,
 # node, cargo-zigbuild, upx, nsis, create-dmg, flatpak, alejandra, linuxdeploy,
-# rcodesign, wix, wix3, pkgbuild, clang-cl, nasm, xmllint. (`wix` is the v4
+# rcodesign, wix, wix3, pkgbuild, clang-cl, nasm, xmllint, ruby. (`wix` is the v4
 # dialect — `wix build` / dotnet global tool; `wix3` is the v3 dialect —
 # candle+light via choco wixtoolset. Both fall back to wixl on Linux.
 # `clang-cl` is Windows-only — the determinism harness's pinned MSVC C/C++
 # compiler. `nasm` is also Windows-only — aws-lc-sys hard-requires it on PATH
 # to assemble its perlasm .asm on windows-msvc. `xmllint` backs the chocolatey
-# prepublish guard's .nuspec schema validation.)
+# prepublish guard's .nuspec schema validation; `ruby` backs the homebrew
+# guard's formula syntax check.)
 set -euo pipefail
 
 # shellcheck source=../lib/gha.sh
@@ -145,7 +146,7 @@ DEPS=()
 # dispatch loop suppresses the generic per-tool "installing X" line for them to
 # avoid a duplicate. flatpak/pkgbuild also queue but flush inline and self-log,
 # so they are NOT listed here. Membership is only consulted on Linux.
-_APT_BATCHED_DEPS=" makeself rpmbuild upx nsis create-dmg wix wix3 xmllint "
+_APT_BATCHED_DEPS=" makeself rpmbuild upx nsis create-dmg wix wix3 xmllint ruby "
 
 # True when $1's installer on this runner just queues a stock apt package
 # (so the batch header/✓ carry its log, not the generic per-tool lines).
@@ -1514,6 +1515,20 @@ install_xmllint() {
     esac
 }
 
+# ruby backs anodizer's homebrew prepublish guard, which runs `ruby -c` over
+# the generated formula and cask when the interpreter is present and falls
+# back to its structural check (with an advisory preflight warning) when it
+# is not. Linux gets the distro interpreter; macOS ships /usr/bin/ruby with
+# the OS; Windows is skipped (the tap push is plain git, and the validating
+# runner in practice is Linux).
+install_ruby() {
+    case "$RUNNER_OS" in
+        Linux)   apt_queue ruby ruby ;;
+        macOS)   anodizer::vdetail "ruby ships with the OS on macOS" ;;
+        Windows) skip_unsupported_os ruby "Linux/macOS only (homebrew: formula syntax validation runs on the packaging runner)" ;;
+    esac
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────
 
 dispatch_install() {
@@ -1554,6 +1569,7 @@ dispatch_install() {
             clang-cl)       install_clang_cl ;;
             nasm)           install_nasm ;;
             xmllint)        install_xmllint ;;
+            ruby)           install_ruby ;;
             # Cloud KMS CLIs — a closed set emitted by auto-detect from a
             # `blobs.kms_key:` URL scheme (awskms:// / gcpkms:// / azurekeyvault://).
             # anodizer ships no installer for them (they are preinstalled on

@@ -129,6 +129,7 @@ map_binary() {
         wix)                           echo wix ;;   # WiX v4 (wix build)
         candle | light | wixl)         echo wix3 ;;  # WiX v3 dialect (candle+light / Linux wixl)
         xmllint)                       echo xmllint ;;  # chocolateys: prepublish .nuspec schema validation
+        ruby)                          echo ruby ;;     # homebrew: prepublish formula syntax check
         aws)                           echo aws ;;
         gcloud)                        echo gcloud ;;
         az)                            echo az ;;

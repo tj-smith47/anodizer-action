@@ -70,7 +70,7 @@ inputs:
       key-load check — or to force a specific tool on.
       Supported: nfpm, makeself, snapcraft, rpmbuild, cosign, syft, zig, node,
       cargo-zigbuild, upx, nsis, create-dmg, flatpak, alejandra, linuxdeploy,
-      rcodesign, wix, wix3, pkgbuild, xmllint.
+      rcodesign, wix, wix3, pkgbuild, xmllint, ruby.
       `wix` is the WiX v4 dialect (`wix build`, the dotnet global tool on
       Windows); `wix3` is the WiX v3 dialect (candle+light via the choco
       wixtoolset package). Both install `wixl` (msitools) on Linux.

@@ -169,6 +169,14 @@ _no_dep() { [[ ",$(_deps)," != *",$1,"* ]]; }
     [[ "$output" != *"::warning::"* ]]
 }
 
+@test "map: ruby (homebrew formula syntax check, advisory) maps to the ruby keyword" {
+    _fake_anodizer '{"schema_version":1,"tools":[{"any_of":["ruby"],"advisory":true}]}'
+    _run
+    [ "$status" -eq 0 ]
+    _has_dep ruby
+    [[ "$output" != *"::warning::"* ]]
+}
+
 # ── any_of groups ────────────────────────────────────────────────────────────
 
 @test "any_of: the dmg group resolves to create-dmg (single keyword)" {
