@@ -366,18 +366,31 @@ STUB
     [[ "$output" == *"retry disabled for stateful mode"* ]]
 }
 
-# Regression guard: `release --preflight-secrets` is a side-effect-free
-# pre-release gate; the new publish/continue/tag cases must not steal it. Still
-# retryable.
-@test "release --preflight-secrets still retryable (3 attempts)" {
+# Regression guard: a standalone `preflight` is a side-effect-free pre-release
+# gate; the publish/continue/tag cases must not steal it. Still retryable.
+@test "preflight subcommand retryable (3 attempts)" {
     _write_failing_stub
-    export ANODIZER_ARGS="release --preflight-secrets --skip blob"
+    export ANODIZER_ARGS="preflight --skip blob"
 
     run "$REPO_ROOT/scripts/run/anodizer.sh"
 
     [ "$status" -eq 1 ]
     [ "$(cat "$WORKDIR/attempts")" = "3" ]
     [[ "$output" == *"attempt 1/3 failed"* ]]
+}
+
+# Misroute guard: `preflight` is also a stage NAME, so `release --skip preflight`
+# carries a bare ` preflight ` token. The leading-anchored case must NOT steal
+# it into the check-only class — it is a plain stateful `release` (runs once).
+@test "release --skip preflight classifies as stateful release, not preflight (runs once)" {
+    _write_failing_stub
+    export ANODIZER_ARGS="release --skip preflight"
+
+    run "$REPO_ROOT/scripts/run/anodizer.sh"
+
+    [ "$status" -eq 1 ]
+    [ "$(cat "$WORKDIR/attempts")" = "1" ]
+    [[ "$output" == *"retry disabled for a stateful release"* ]]
 }
 
 # Regression guard: `release --dry-run` stays retryable — the new publish/tag

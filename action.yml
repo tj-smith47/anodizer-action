@@ -66,8 +66,8 @@ inputs:
     description: >
       Explicit comma-separated list of build/pipeline dependencies to install,
       bypassing auto-detection. Use this when the job does NOT run the pipeline
-      (so `anodizer tools` has nothing to report) — e.g. a `--preflight-secrets`
-      key-load check — or to force a specific tool on.
+      (so `anodizer tools` has nothing to report) — e.g. a standalone
+      `preflight` job — or to force a specific tool on.
       Supported: nfpm, makeself, snapcraft, rpmbuild, cosign, syft, zig, node,
       cargo-zigbuild, upx, nsis, create-dmg, flatpak, alejandra, linuxdeploy,
       rcodesign, wix, wix3, pkgbuild, xmllint, ruby.

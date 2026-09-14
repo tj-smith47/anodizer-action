@@ -152,6 +152,17 @@ resolve_max_retries() {
             return
             ;;
     esac
+    # A standalone `preflight` runs the pre-release check (environment,
+    # publisher credential probes, reconcile) and publishes nothing, so it stays
+    # retryable. LEADING-ANCHORED like `tag`: `preflight` is also a stage name
+    # (`release --skip preflight`), so a bare token match would flip a stateful
+    # release to 3x-retryable.
+    case "$ANODIZER_ARGS " in
+        "preflight "*)
+            echo 3
+            return
+            ;;
+    esac
     # A plain `release` cuts the tag, creates the GitHub release, runs the
     # publishers, and on failure rolls back — DELETING the tag. A retry then
     # finds no release tag at HEAD, short-circuits "nothing to do", and exits 0,
@@ -163,11 +174,11 @@ resolve_max_retries() {
     # retryable: --snapshot / --nightly / --dry-run build no upstream state (or
     # self-tag, so a retry genuinely re-cuts rather than no-opping), --merge
     # consumes a preserved dist behind anodizer's own publish-rerun guard, and
-    # --preflight / --prepare / --split mutate nothing upstream.
+    # --prepare / --split mutate nothing upstream.
     case " $ANODIZER_ARGS " in
         *" release "*)
             case " $ANODIZER_ARGS " in
-                *" --snapshot "*|*" --nightly "*|*" --dry-run "*|*" --merge "*|*" --preflight "*|*" --preflight-secrets "*|*" --prepare "*|*" --split "*|*" --announce-only "*)
+                *" --snapshot "*|*" --nightly "*|*" --dry-run "*|*" --merge "*|*" --prepare "*|*" --split "*|*" --announce-only "*)
                     echo 3
                     ;;
                 *)

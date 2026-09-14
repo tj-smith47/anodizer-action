@@ -56,7 +56,7 @@ means the input has no default.
 | `from-branch` | Shallow-clone `tj-smith47/anodizer` at the given branch (e.g. `my-feature`) and build it from source. Branch name only — the repo is hardcoded; no owner prefix or SHA. Rust is auto-installed. Mutually exclusive with `version`, `from-artifact`, and `from-source`. | `""` | no |
 | `from-source` | Build anodizer from source in the current workdir (bootstrap mode). Rust is auto-installed — you do not also need `install-rust: true`. | `false` | no |
 | `gpg-private-key` | GPG private key contents to import for signing. Piped into `gpg --batch --import`. See [Key material](#key-material). | `—` | no |
-| `install` | Explicit comma-separated build/pipeline dependencies, bypassing auto-detection: `nfpm`, `makeself`, `snapcraft`, `rpmbuild`, `cosign`, `syft`, `zig`, `node`, `cargo-zigbuild`, `upx`, `nsis`, `create-dmg`, `flatpak`, `alejandra`, `linuxdeploy`, `rcodesign`, `wix`, `wix3`, `pkgbuild`, `xmllint`, `ruby`. (`wix` = WiX v4; `wix3` = WiX v3; both install `wixl` on Linux.) Uses the platform's native package manager. Use this for jobs that do **not** run the pipeline (so `anodizer tools` reports nothing) — e.g. a `--preflight-secrets` key-load check — or to force a specific tool on. | `—` | no |
+| `install` | Explicit comma-separated build/pipeline dependencies, bypassing auto-detection: `nfpm`, `makeself`, `snapcraft`, `rpmbuild`, `cosign`, `syft`, `zig`, `node`, `cargo-zigbuild`, `upx`, `nsis`, `create-dmg`, `flatpak`, `alejandra`, `linuxdeploy`, `rcodesign`, `wix`, `wix3`, `pkgbuild`, `xmllint`, `ruby`. (`wix` = WiX v4; `wix3` = WiX v3; both install `wixl` on Linux.) Uses the platform's native package manager. Use this for jobs that do **not** run the pipeline (so `anodizer tools` reports nothing) — e.g. a standalone `preflight` job — or to force a specific tool on. | `—` | no |
 | `install-only` | Only install anodizer (and any requested dependencies/keys); skip running it. | `false` | no |
 | `install-rust` | Install the stable Rust toolchain (`dtolnay/rust-toolchain`). | `false` | no |
 | `preserve-dist` | When `determinism: true`, preserve the harness's byte-stable dist tree to `./preserved-dist/` for a downstream `release --publish-only` job. Manifests get a `-<shard-label>` suffix so sharded uploads don't collide under `merge-multiple`. Requires `shard-label`. | `false` | no |
@@ -211,9 +211,11 @@ API.
 
 ### Preflight and failure handling — in-process, no extra steps
 
-The release step is self-contained. `anodizer release` runs a config-derived
-environment preflight before any stage (required tools, secrets, endpoint
-reachability, parseable key material) and, on a pipeline failure, executes the
+The release step is self-contained. `anodizer release` runs the config-derived
+preflight once, before any stage — the environment half (required tools,
+secrets, endpoint reachability, parseable key material), a credential probe
+against every selected publisher, and a reconcile sweep against the version it
+is about to cut — and, on a pipeline failure, executes the
 `release.on_failure` policy inside the binary — rolling back the tag and
 version-bump commit by default, auto-degrading to `hold` once any one-way-door
 publisher (crates.io, chocolatey, winget, snapcraft, …) has landed. Failure
@@ -226,16 +228,24 @@ release:
 ```
 
 To prove a runner can cut the release before a real tag is in flight — a
-scheduled canary, or debugging a missing-secret failure — run the same engine
-standalone:
+pre-tag gate job, a scheduled canary, or debugging a missing-secret failure —
+run the same engine standalone; it derives the version it probes from the tag
+at HEAD or, absent one, from the next version `anodizer tag` would cut:
 
 ```yaml
 - uses: tj-smith47/anodizer-action@v1
   with:
-    args: preflight --publish-only
+    args: preflight
   env:
     # same secret env block as the release job
     GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+```
+
+A release job that runs after such a gate passes `--skip=preflight` so the
+engine runs once per release, not once per job:
+
+```yaml
+    args: release --publish-only --skip=preflight
 ```
 
 ### Manual recovery (advanced)
@@ -708,8 +718,8 @@ For the full decision tree (single-crate, lockstep workspace, per-crate workspac
 
 The `Run anodizer` step retries up to 3 times — but **only for invocations that
 build no upstream state**. Build and preview legs (`--snapshot`, `--nightly`,
-`--dry-run`, `--merge`, `--preflight`, `--preflight-secrets`, `--prepare`,
-`--split`, `--announce-only`) retry on a transient failure (registry rate
+`--dry-run`, `--merge`, `--prepare`, `--split`, `--announce-only`) and the
+standalone `preflight` subcommand retry on a transient failure (registry rate
 limits, Docker push auth expiry, network blips). Between retries the step prunes
 generated artifacts from the dist tree (the configured `dist:` directory) so the
 rebuild can't hit "already exists" collisions — **unless** any split/preserved
