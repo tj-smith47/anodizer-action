@@ -12,8 +12,8 @@
 # retry would either (a) trip the publish-stage rerun guard and bail, or
 # (b) — if forced past the guard — open duplicate PRs against PR-based
 # publishers (homebrew, scoop, nix, krew, MCP). Recovery from a partial
-# publish-only failure is operator-driven via
-# `anodizer release --rollback-only --from-run=<id>`, not a wrapper
+# publish-only failure is an operator-driven re-run of the same command
+# (publishers reconcile and skip what already landed), not a wrapper
 # retry.
 #
 # Deterministic failures are exempt too, by a different mechanism: anodizer
@@ -89,8 +89,8 @@ resolve_max_retries() {
     # stateful failure either no-ops into a FALSE-GREEN or double-acts.
     # case-glob matches the flag anywhere in the arg list.
     case " $ANODIZER_ARGS " in
-        *" --publish-only "*|*" --rollback-only "*|*" tag rollback "*)
-            anodizer::warn "retry disabled for stateful mode (--publish-only / --rollback-only / tag rollback)"
+        *" --publish-only "*|*" tag rollback "*)
+            anodizer::warn "retry disabled for stateful mode (--publish-only / tag rollback)"
             echo 1
             return
             ;;
@@ -163,14 +163,14 @@ resolve_max_retries() {
             return
             ;;
     esac
-    # A plain `release` cuts the tag, creates the GitHub release, runs the
-    # publishers, and on failure rolls back — DELETING the tag. A retry then
-    # finds no release tag at HEAD, short-circuits "nothing to do", and exits 0,
-    # turning a FAILED release GREEN (the brontes/cfgd pre-tagged pattern:
-    # workflow triggered by a tag push, release job's rollback removes it).
+    # A plain `release` cuts the tag, creates the GitHub release and runs the
+    # publishers; a partial failure leaves that state in place (on_failure is
+    # `hold`, there is no automatic rollback). A blind wrapper retry would
+    # re-enter that state without the operator seeing the first failure, and a
+    # publisher that is not idempotent at its registry would act twice.
     # Transient per-publisher failures (rate limits, network, auth expiry) are
-    # retried INSIDE anodizer — the only layer that can retry without
-    # re-running rollback. Build-only / preview / orchestrated legs stay
+    # retried INSIDE anodizer — the only layer that can retry one publisher on
+    # its own. Build-only / preview / orchestrated legs stay
     # retryable: --snapshot / --nightly / --dry-run build no upstream state (or
     # self-tag, so a retry genuinely re-cuts rather than no-opping), --merge
     # consumes a preserved dist behind anodizer's own publish-rerun guard, and
@@ -182,7 +182,7 @@ resolve_max_retries() {
                     echo 3
                     ;;
                 *)
-                    anodizer::warn "retry disabled for a stateful release (cuts a tag + publishes, rolls back on failure; a blind retry would false-green). Transient failures retry inside anodizer."
+                    anodizer::warn "retry disabled for a stateful release (cuts a tag + publishes; recovery is a re-run of the same command). Transient failures retry inside anodizer."
                     echo 1
                     ;;
             esac

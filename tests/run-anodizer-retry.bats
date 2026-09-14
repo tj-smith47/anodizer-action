@@ -189,9 +189,10 @@ STUB
     [[ "$output" == *"attempt 1/3 failed"* ]]
 }
 
-# --rollback-only is stateful recovery: re-running it would fight concurrent
-# operations or double-act. Exactly once, surfacing the real failure.
-@test "stateful --rollback-only runs exactly once" {
+# `--rollback-only` was removed from anodizer, which now rejects it. The
+# wrapper must still classify the invocation as a plain release and run it
+# once, so the removed-flag error reaches the operator unretried.
+@test "a removed --rollback-only flag still classifies as a plain release (runs once)" {
     cat > "$STUB_BIN/anodizer" <<STUB
 #!/usr/bin/env bash
 count_file="$WORKDIR/attempts"
@@ -206,7 +207,7 @@ STUB
 
     [ "$status" -eq 1 ]
     [ "$(cat "$WORKDIR/attempts")" = "1" ]
-    [[ "$output" == *"retry disabled for stateful mode"* ]]
+    [[ "$output" == *"retry disabled for a stateful release"* ]]
 }
 
 # `tag rollback` deletes the tag + reverts the writeback commit; a blind retry

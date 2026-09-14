@@ -215,16 +215,16 @@ The release step is self-contained. `anodizer release` runs the config-derived
 preflight once, before any stage — the environment half (required tools,
 secrets, endpoint reachability, parseable key material), a credential probe
 against every selected publisher, and a reconcile sweep against the version it
-is about to cut — and, on a pipeline failure, executes the
-`release.on_failure` policy inside the binary — rolling back the tag and
-version-bump commit by default, auto-degrading to `hold` once any one-way-door
-publisher (crates.io, chocolatey, winget, snapcraft, …) has landed. Failure
-policy is config, not workflow YAML:
+is about to cut. On a pipeline failure the binary leaves everything where the
+run left it (`release.on_failure: hold`, the only policy) and exits nonzero;
+there is no automatic rollback. Recovery is a re-run of the identical command:
+every publisher reconciles against the registry first and skips what already
+landed, so the re-run converges. Failure policy is config, not workflow YAML:
 
 ```yaml
 # .anodizer.yaml
 release:
-  on_failure: rollback   # rollback | hold; default rollback
+  on_failure: hold   # the only accepted value; also the default — the field is optional
 ```
 
 To prove a runner can cut the release before a real tag is in flight — a
@@ -250,11 +250,12 @@ engine runs once per release, not once per job:
 
 ### Manual recovery (advanced)
 
-A run killed before the binary could execute its own policy (runner eviction,
-cancellation), or one held by `on_failure: hold`, is recovered by hand with
-`anodizer tag rollback` / `anodizer release --rollback-only`. `tag rollback`
-reads the run summaries itself and refuses when the version is burned at a
-one-way-door publisher (override with `--force`).
+A run that failed part-way (or was killed by runner eviction or cancellation)
+is recovered by re-running the same workflow: publishers reconcile and skip
+what already landed. Deliberate withdrawal of a release is
+`anodizer tag rollback`, which reads the run summaries itself and refuses
+when the version is burned at a one-way-door publisher (override with
+`--force`).
 
 Workflows that wire their own destructive recovery step must gate it on the
 `irreversibly-published` output so it never destroys a live release:
@@ -637,7 +638,25 @@ Skip all downstream jobs when nothing changed:
 
 ```yaml
 jobs:
+  # Run the whole pre-release check once, before a tag exists, so a bad secret
+  # or an already-published version stops the run with nothing tagged.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: tj-smith47/anodizer-action@v1
+        with:
+          auto-install: true
+          args: preflight
+        env:
+          # the same secrets the release job consumes
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
   tag:
+    needs: preflight
     runs-on: ubuntu-latest
     outputs:
       crates: ${{ steps.t.outputs.crates }}
@@ -654,7 +673,7 @@ jobs:
       - uses: tj-smith47/anodizer-action@v1
         id: t
         with:
-          args: tag
+          args: tag --push
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
@@ -704,13 +723,13 @@ jobs:
         with:
           auto-install: true
           download-dist: true
-          args: release --publish-only
+          args: release --publish-only --skip=preflight   # the preflight job already ran the engine
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 ```
 
-The `determinism-crate` input scopes the harness to one crate per matrix entry, so each shard validates only the targets that belong to that crate. `release --publish-only` consumes all preserved-dist subdirs and publishes in topological order.
+The `determinism-crate` input scopes the harness to one crate per matrix entry, so each shard validates only the targets that belong to that crate. `release --publish-only` consumes all preserved-dist subdirs and publishes in topological order. The `preflight` job is the one place the pre-release check runs; the release job passes `--skip=preflight` so the engine runs once per release (see [Preflight and failure handling](#preflight-and-failure-handling--in-process-no-extra-steps)).
 
 For the full decision tree (single-crate, lockstep workspace, per-crate workspace, hybrid groupings, split-CI governance) and copy-pasteable YAML for every strategy, see the [Release Workflow Strategies](https://tj-smith47.github.io/anodizer/docs/ci/release-workflows/) page in the anodize docs.
 
@@ -728,15 +747,16 @@ root, or `context*.json` in any first-level subdir). In that case cleanup is
 skipped entirely — all-or-nothing, not per-file — because those trees are
 `--merge` / `--publish-only` inputs that a retry must never wipe.
 
-A **plain `anodizer release`** (and the explicitly stateful `--publish-only`,
-`--rollback-only`, and `tag rollback`) runs **exactly once — no retry**. A plain
-release cuts the tag, creates the GitHub release, runs the publishers, and on
-failure rolls back, *deleting the tag*. A blind whole-pipeline retry would then
-re-run against a tagless HEAD, anodizer would short-circuit "no release tag —
-nothing to do" and exit 0, and a **failed release would report green**.
-Transient per-publisher failures are instead retried *inside* anodizer — the
-only layer that can retry a single publisher without re-running rollback — so
-the wrapper surfaces the real failure rather than masking it.
+A **plain `anodizer release`** (and the explicitly stateful `--publish-only`
+and `tag rollback`) runs **exactly once — no retry**. A plain release cuts the
+tag, creates the GitHub release and runs the publishers; a partial failure
+leaves that state in place. A blind whole-pipeline retry from the wrapper
+would re-enter the run without the operator seeing why the first attempt
+failed, and any publisher that is not idempotent at the registry would act
+twice. Transient per-publisher failures are instead retried *inside* anodizer
+— the only layer that can retry a single publisher on its own — so the wrapper
+surfaces the real failure rather than masking it. Recovery is the convergent
+re-run described under [Manual recovery](#manual-recovery-advanced).
 
 ### Deterministic failures stop on the first attempt
 
